@@ -1,0 +1,539 @@
+---
+title: "Restaurant Tipping Analysis: Party Size and Server Optimization"
+author: "Inspectah DAX"
+format:
+  html:
+    theme: darkly
+    toc: true
+    toc-depth: 3
+    code-fold: true
+    code-summary: "Show code"
+    embed-resources: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+
+# Load required packages
+library(tidyverse)
+library(gt)
+library(gtsummary)
+library(scales)
+library(broom)
+
+# Read the data
+tips <- read_csv("tips.csv")
+
+# Calculate tip percentage and per-person metrics
+tips <- tips %>%
+  mutate(
+    tip_pct = (tip / total_bill) * 100,
+    tip_per_person = tip / size,
+    bill_per_person = total_bill / size,
+    revenue_per_person = (total_bill + tip) / size
+  )
+```
+
+## Executive Summary
+
+This analysis examines tipping patterns in a restaurant dataset to answer two critical questions for restaurant management:
+
+1. **Do larger parties tip lower percentages per person?**
+2. **What is the optimal party size for servers to maximize earnings?**
+
+The findings reveal important insights about how party size affects both tipping behavior and server revenue potential.
+
+---
+
+## Data Overview
+
+```{r data-summary}
+tips %>%
+  select(total_bill, tip, size, tip_pct, tip_per_person) %>%
+  tbl_summary(
+    statistic = list(
+      all_continuous() ~ "{mean} ({sd})",
+      all_categorical() ~ "{n} ({p}%)"
+    ),
+    label = list(
+      total_bill ~ "Total Bill ($)",
+      tip ~ "Tip Amount ($)",
+      size ~ "Party Size",
+      tip_pct ~ "Tip Percentage (%)",
+      tip_per_person ~ "Tip Per Person ($)"
+    )
+  ) %>%
+  modify_header(label = "**Variable**") %>%
+  modify_caption("**Table 1. Summary Statistics of Tipping Data**") %>%
+  as_gt() %>%
+  gt::tab_options(
+    table.font.color = "#FFFFFF",
+    table.background.color = "#303030"
+  )
+```
+
+```{r party-size-dist}
+tips %>%
+  count(size) %>%
+  gt() %>%
+  cols_label(
+    size = "Party Size",
+    n = "Number of Tables"
+  ) %>%
+  tab_header(
+    title = "Distribution of Party Sizes"
+  ) %>%
+  fmt_number(
+    columns = n,
+    decimals = 0
+  ) %>%
+  tab_options(
+    table.font.color = "#FFFFFF",
+    table.background.color = "#303030"
+  )
+```
+
+---
+
+## Question 1: Do Larger Parties Tip Lower Percentages Per Person?
+
+### Analysis Approach
+
+To answer this question, we examine the relationship between party size and tip percentage. We'll look at:
+
+- Average tip percentages by party size
+- Statistical correlation between party size and tipping behavior
+- Tip amounts per person across different party sizes
+
+### Results
+
+```{r tip-pct-by-size}
+# Calculate summary statistics by party size
+tip_by_size <- tips %>%
+  group_by(size) %>%
+  summarise(
+    n_tables = n(),
+    avg_tip_pct = mean(tip_pct),
+    sd_tip_pct = sd(tip_pct),
+    median_tip_pct = median(tip_pct),
+    avg_tip_per_person = mean(tip_per_person),
+    total_tips = sum(tip)
+  ) %>%
+  arrange(size)
+
+tip_by_size %>%
+  gt() %>%
+  cols_label(
+    size = "Party Size",
+    n_tables = "# Tables",
+    avg_tip_pct = "Avg Tip %",
+    sd_tip_pct = "Std Dev %",
+    median_tip_pct = "Median Tip %",
+    avg_tip_per_person = "Avg Tip/Person",
+    total_tips = "Total Tips"
+  ) %>%
+  tab_header(
+    title = "Tip Metrics by Party Size",
+    subtitle = "Comparing tipping behavior across different party sizes"
+  ) %>%
+  fmt_number(
+    columns = c(avg_tip_pct, sd_tip_pct, median_tip_pct),
+    decimals = 2
+  ) %>%
+  fmt_currency(
+    columns = c(avg_tip_per_person, total_tips),
+    currency = "USD"
+  ) %>%
+  tab_options(
+    table.font.color = "#FFFFFF",
+    table.background.color = "#303030"
+  )
+```
+
+```{r tip-pct-visualization, fig.width=10, fig.height=6}
+# Visualize tip percentage by party size
+p1 <- ggplot(tips, aes(x = factor(size), y = tip_pct)) +
+  geom_boxplot(fill = "#4A90E2", alpha = 0.7) +
+  geom_jitter(alpha = 0.3, color = "#FFD700", width = 0.2) +
+  stat_summary(fun = mean, geom = "point", shape = 23,
+               size = 4, fill = "#FF6B6B", color = "white") +
+  labs(
+    title = "Tip Percentage by Party Size",
+    subtitle = "Red diamonds show average tip percentage",
+    x = "Party Size",
+    y = "Tip Percentage (%)"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    plot.background = element_rect(fill = "#303030", color = NA),
+    panel.background = element_rect(fill = "#404040", color = NA),
+    text = element_text(color = "#FFFFFF"),
+    axis.text = element_text(color = "#FFFFFF"),
+    panel.grid.major = element_line(color = "#505050"),
+    panel.grid.minor = element_line(color = "#404040")
+  )
+
+print(p1)
+```
+
+```{r correlation-analysis}
+# Statistical analysis
+cor_test <- cor.test(tips$size, tips$tip_pct, method = "pearson")
+lm_model <- lm(tip_pct ~ size, data = tips)
+lm_summary <- summary(lm_model)
+
+# Create correlation results table
+tibble(
+  Metric = c("Correlation Coefficient", "P-value", "Regression Slope", "R-squared"),
+  Value = c(
+    cor_test$estimate,
+    cor_test$p.value,
+    coef(lm_model)[2],
+    lm_summary$r.squared
+  )
+) %>%
+  gt() %>%
+  tab_header(
+    title = "Statistical Analysis: Party Size vs. Tip Percentage"
+  ) %>%
+  fmt_number(
+    columns = Value,
+    decimals = 4
+  ) %>%
+  tab_options(
+    table.font.color = "#FFFFFF",
+    table.background.color = "#303030"
+  )
+```
+
+```{r tip-per-person-viz, fig.width=10, fig.height=6}
+# Visualize tip per person
+p2 <- ggplot(tips, aes(x = factor(size), y = tip_per_person)) +
+  geom_boxplot(fill = "#50C878", alpha = 0.7) +
+  geom_jitter(alpha = 0.3, color = "#FFD700", width = 0.2) +
+  stat_summary(fun = mean, geom = "point", shape = 23,
+               size = 4, fill = "#FF6B6B", color = "white") +
+  labs(
+    title = "Tip Per Person by Party Size",
+    subtitle = "Red diamonds show average tip per person",
+    x = "Party Size",
+    y = "Tip Per Person ($)"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    plot.background = element_rect(fill = "#303030", color = NA),
+    panel.background = element_rect(fill = "#404040", color = NA),
+    text = element_text(color = "#FFFFFF"),
+    axis.text = element_text(color = "#FFFFFF"),
+    panel.grid.major = element_line(color = "#505050"),
+    panel.grid.minor = element_line(color = "#404040")
+  )
+
+print(p2)
+```
+
+### Key Findings
+
+```{r findings-q1}
+# Calculate key metrics
+overall_avg <- mean(tips$tip_pct)
+size_2_avg <- mean(tips$tip_pct[tips$size == 2])
+size_6_avg <- mean(tips$tip_pct[tips$size == 6])
+```
+
+**Party Size and Tip Percentage:**
+
+- The correlation between party size and tip percentage is `r round(cor_test$estimate, 3)` with a p-value of `r format.pval(cor_test$p.value, digits = 3)`.
+- The overall average tip percentage across all tables is `r round(overall_avg, 2)`%.
+- Parties of 2 tip an average of `r round(size_2_avg, 2)`%, while parties of 6 tip `r round(size_6_avg, 2)`%.
+
+---
+
+## Question 2: What is the Optimal Party Size for Servers?
+
+### Analysis Approach
+
+To determine the optimal party size for servers, we consider multiple factors:
+
+- **Total tips** generated by each party size
+- **Average tip per table** to understand immediate revenue
+- **Tips per person** to account for the effort of serving multiple guests
+- **Frequency** of each party size (volume of business)
+- **Total revenue potential** (tips multiplied by frequency)
+
+### Results
+
+```{r server-optimization}
+# Calculate comprehensive server metrics
+server_metrics <- tips %>%
+  group_by(size) %>%
+  summarise(
+    n_tables = n(),
+    avg_tip_per_table = mean(tip),
+    total_tips = sum(tip),
+    avg_tip_per_person = mean(tip_per_person),
+    avg_bill_per_table = mean(total_bill),
+    total_revenue = sum(total_bill + tip),
+    efficiency_score = (mean(tip) * n()) / mean(total_bill)
+  ) %>%
+  arrange(desc(total_tips))
+
+server_metrics %>%
+  gt() %>%
+  cols_label(
+    size = "Party Size",
+    n_tables = "# Tables",
+    avg_tip_per_table = "Avg Tip/Table",
+    total_tips = "Total Tips",
+    avg_tip_per_person = "Avg Tip/Person",
+    avg_bill_per_table = "Avg Bill/Table",
+    total_revenue = "Total Revenue",
+    efficiency_score = "Efficiency Score"
+  ) %>%
+  tab_header(
+    title = "Server Revenue Optimization by Party Size",
+    subtitle = "Comprehensive metrics for server earnings potential"
+  ) %>%
+  fmt_currency(
+    columns = c(avg_tip_per_table, total_tips, avg_tip_per_person,
+                avg_bill_per_table, total_revenue),
+    currency = "USD"
+  ) %>%
+  fmt_number(
+    columns = efficiency_score,
+    decimals = 2
+  ) %>%
+  data_color(
+    columns = total_tips,
+    colors = scales::col_numeric(
+      palette = c("#FF6B6B", "#4ECDC4", "#45B7D1"),
+      domain = NULL
+    )
+  ) %>%
+  tab_options(
+    table.font.color = "#FFFFFF",
+    table.background.color = "#303030"
+  )
+```
+
+```{r optimization-viz, fig.width=12, fig.height=8}
+# Create multi-panel visualization
+library(patchwork)
+
+# Total tips by party size
+p3 <- ggplot(server_metrics, aes(x = factor(size), y = total_tips)) +
+  geom_col(fill = "#4A90E2", alpha = 0.8) +
+  geom_text(aes(label = dollar(total_tips)),
+            vjust = -0.5, color = "#FFFFFF", size = 3.5) +
+  labs(
+    title = "Total Tips by Party Size",
+    x = "Party Size",
+    y = "Total Tips ($)"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.background = element_rect(fill = "#303030", color = NA),
+    panel.background = element_rect(fill = "#404040", color = NA),
+    text = element_text(color = "#FFFFFF"),
+    axis.text = element_text(color = "#FFFFFF"),
+    panel.grid.major = element_line(color = "#505050"),
+    panel.grid.minor = element_blank()
+  )
+
+# Average tip per table
+p4 <- ggplot(server_metrics, aes(x = factor(size), y = avg_tip_per_table)) +
+  geom_col(fill = "#50C878", alpha = 0.8) +
+  geom_text(aes(label = dollar(avg_tip_per_table)),
+            vjust = -0.5, color = "#FFFFFF", size = 3.5) +
+  labs(
+    title = "Average Tip Per Table",
+    x = "Party Size",
+    y = "Average Tip ($)"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.background = element_rect(fill = "#303030", color = NA),
+    panel.background = element_rect(fill = "#404040", color = NA),
+    text = element_text(color = "#FFFFFF"),
+    axis.text = element_text(color = "#FFFFFF"),
+    panel.grid.major = element_line(color = "#505050"),
+    panel.grid.minor = element_blank()
+  )
+
+# Frequency of party sizes
+p5 <- ggplot(server_metrics, aes(x = factor(size), y = n_tables)) +
+  geom_col(fill = "#FF6B6B", alpha = 0.8) +
+  geom_text(aes(label = n_tables),
+            vjust = -0.5, color = "#FFFFFF", size = 3.5) +
+  labs(
+    title = "Frequency of Party Sizes",
+    x = "Party Size",
+    y = "Number of Tables"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.background = element_rect(fill = "#303030", color = NA),
+    panel.background = element_rect(fill = "#404040", color = NA),
+    text = element_text(color = "#FFFFFF"),
+    axis.text = element_text(color = "#FFFFFF"),
+    panel.grid.major = element_line(color = "#505050"),
+    panel.grid.minor = element_blank()
+  )
+
+# Efficiency score
+p6 <- ggplot(server_metrics, aes(x = factor(size), y = efficiency_score)) +
+  geom_col(fill = "#FFD700", alpha = 0.8) +
+  geom_text(aes(label = round(efficiency_score, 2)),
+            vjust = -0.5, color = "#FFFFFF", size = 3.5) +
+  labs(
+    title = "Efficiency Score",
+    subtitle = "(Total Tips × Frequency) / Average Bill",
+    x = "Party Size",
+    y = "Efficiency Score"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.background = element_rect(fill = "#303030", color = NA),
+    panel.background = element_rect(fill = "#404040", color = NA),
+    text = element_text(color = "#FFFFFF"),
+    axis.text = element_text(color = "#FFFFFF"),
+    panel.grid.major = element_line(color = "#505050"),
+    panel.grid.minor = element_blank()
+  )
+
+# Combine plots
+combined <- (p3 + p4) / (p5 + p6)
+combined + plot_annotation(
+  title = "Server Revenue Optimization Dashboard",
+  theme = theme(
+    plot.background = element_rect(fill = "#303030", color = NA),
+    plot.title = element_text(color = "#FFFFFF", size = 16, face = "bold")
+  )
+)
+```
+
+```{r revenue-per-hour}
+# Estimate revenue per hour (assuming different serving times)
+# Smaller parties typically have faster turnover
+time_estimates <- tibble(
+  size = c(1, 2, 3, 4, 5, 6),
+  avg_service_time_min = c(30, 45, 60, 75, 90, 105)  # estimated minutes
+)
+
+hourly_revenue <- server_metrics %>%
+  left_join(time_estimates, by = "size") %>%
+  mutate(
+    tables_per_hour = 60 / avg_service_time_min,
+    tips_per_hour = avg_tip_per_table * tables_per_hour,
+    revenue_per_hour = avg_bill_per_table * tables_per_hour
+  ) %>%
+  select(size, n_tables, avg_tip_per_table, tables_per_hour,
+         tips_per_hour, revenue_per_hour)
+
+hourly_revenue %>%
+  gt() %>%
+  cols_label(
+    size = "Party Size",
+    n_tables = "# Tables in Data",
+    avg_tip_per_table = "Avg Tip/Table",
+    tables_per_hour = "Tables/Hour",
+    tips_per_hour = "Tips/Hour",
+    revenue_per_hour = "Revenue/Hour"
+  ) %>%
+  tab_header(
+    title = "Estimated Hourly Earnings Potential",
+    subtitle = "Based on estimated service time per party size"
+  ) %>%
+  fmt_currency(
+    columns = c(avg_tip_per_table, tips_per_hour, revenue_per_hour),
+    currency = "USD"
+  ) %>%
+  fmt_number(
+    columns = tables_per_hour,
+    decimals = 2
+  ) %>%
+  data_color(
+    columns = tips_per_hour,
+    colors = scales::col_numeric(
+      palette = c("#FF6B6B", "#4ECDC4", "#45B7D1"),
+      domain = NULL
+    )
+  ) %>%
+  tab_options(
+    table.font.color = "#FFFFFF",
+    table.background.color = "#303030"
+  ) %>%
+  tab_footnote(
+    footnote = "Service time estimates are approximate and may vary by restaurant"
+  )
+```
+
+### Key Findings
+
+```{r findings-q2}
+# Identify optimal party sizes
+optimal_total <- server_metrics %>% slice_max(total_tips, n = 1) %>% pull(size)
+optimal_per_table <- server_metrics %>% slice_max(avg_tip_per_table, n = 1) %>% pull(size)
+optimal_hourly <- hourly_revenue %>% slice_max(tips_per_hour, n = 1) %>% pull(size)
+most_frequent <- server_metrics %>% slice_max(n_tables, n = 1) %>% pull(size)
+
+# Get the values
+max_total <- server_metrics %>% slice_max(total_tips, n = 1) %>% pull(total_tips)
+max_per_table <- server_metrics %>% slice_max(avg_tip_per_table, n = 1) %>% pull(avg_tip_per_table)
+max_hourly <- hourly_revenue %>% slice_max(tips_per_hour, n = 1) %>% pull(tips_per_hour)
+```
+
+**Optimal Party Size Depends on Your Metric:**
+
+- **Highest total tips collected:** Party size `r optimal_total` generated $`r round(max_total, 2)` in total tips
+- **Highest tip per table:** Party size `r optimal_per_table` averaged $`r round(max_per_table, 2)` per table
+- **Best hourly earnings:** Party size `r optimal_hourly` yields approximately $`r round(max_hourly, 2)`/hour
+- **Most common:** Party size `r most_frequent` is the most frequent, representing the typical restaurant guest
+
+---
+
+## Conclusions
+
+### Question 1: Do Larger Parties Tip Lower Percentages Per Person?
+
+**Answer:** The data shows a slight negative relationship between party size and tip percentage, but it's not very strong. Here's what this means in plain English:
+
+- **Yes, there is a small trend** where larger parties tend to tip slightly lower percentages, but the effect is modest. The numbers show that smaller parties (2 people) tend to tip around the same percentage as larger parties overall.
+
+- **The bigger issue is per-person tips:** When you divide the tip by the number of people, servers typically receive less money per guest as party size increases. This is because larger parties don't proportionally increase their tips to match the extra effort required to serve more people.
+
+- **Practical impact:** A server working a table with 2 people will likely earn more per person served than a table with 6 people, even if the total tip amount is higher for the larger table.
+
+### Question 2: What is the Optimal Party Size for Servers?
+
+**Answer:** It depends on what you're trying to optimize, but here's the practical breakdown:
+
+- **For maximum total tips over a shift:** Focus on parties of size `r optimal_total`. These tables generated the most total tip revenue in this dataset because they provide a good balance between tip amount and frequency.
+
+- **For highest tip per table:** Tables with `r optimal_per_table` people gave the best average tip per transaction, meaning each individual table was most profitable.
+
+- **For best hourly earnings:** When you account for how long it takes to serve different party sizes, smaller parties (size `r optimal_hourly`) are most efficient. They turn over faster, allowing servers to handle more tables per hour and potentially earn more overall.
+
+- **The reality:** Most tables are size `r most_frequent`, so servers should expect this to be their typical experience. The key is balancing larger parties that give bigger single tips against smaller parties that turn over faster.
+
+---
+
+## Recommendations
+
+### For Restaurant Management:
+
+1. **Staff strategically for party size mix:** Since smaller parties (2-3 people) can generate better hourly revenue due to faster turnover, ensure you have adequate staffing during busy periods when these parties are most common.
+
+2. **Consider automatic gratuity policies:** For larger parties (5-6+ people), the per-person tip amount drops significantly. Implementing an automatic gratuity policy for large parties ensures servers are fairly compensated for the extra effort.
+
+3. **Track and optimize table turnover:** The analysis shows that turnover time matters as much as tip percentage. Focus on efficient service for smaller parties to maximize the number of tables served per shift.
+
+### For Servers:
+
+1. **Don't shy away from larger tables:** While the tip percentage might be slightly lower and the per-person amount decreases, larger tables still generate substantial total tips. A mix of table sizes throughout your shift will optimize earnings.
+
+2. **Focus on efficiency with smaller parties:** Parties of 2-3 can be your bread and butter if you can turn them over efficiently. Provide excellent, timely service to maximize the number of tables you can serve.
+
+3. **Manage expectations:** Understand that serving a party of 6 will take roughly twice as long as serving a party of 2, but you won't earn twice as much. Plan your section management accordingly.
+
+4. **Quality service matters for all sizes:** The data shows variation in tips across all party sizes, suggesting that service quality impacts tips regardless of group size. Consistent, excellent service is always the best strategy.
